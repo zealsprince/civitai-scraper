@@ -16,11 +16,16 @@ DEFAULT_WORKERS = 4
 
 
 class FilterParams:
-    def __init__(self, min_width, min_height, min_hearts, metadata_required, nsfw_only):
+    def __init__(self, min_width, min_height, min_like, min_dislike, min_comment, min_hearts, min_cry, min_laugh, metadata_required, nsfw_only):
         self.min_width = min_width or 0
         self.min_height = min_height or 0
 
+        self.min_like = min_like or 0
+        self.min_dislike = min_dislike or 0
+        self.min_comment = min_comment or 0
         self.min_hearts = min_hearts or 0
+        self.min_cry = min_cry or 0
+        self.min_laugh = min_laugh or 0
 
         self.metadata_required = metadata_required or False
 
@@ -31,10 +36,19 @@ def filter_items(items, downloaded, filter_params: FilterParams):
     return [
         item for item in items if
         item['url'] + "\n" not in downloaded and
+
         item['width'] >= filter_params.min_width and
         item['height'] >= filter_params.min_height and
-        item['stats']['heartCount'] > filter_params.min_hearts and
+
+        item['stats']['likeCount'] >= filter_params.min_like and
+        item['stats']['dislikeCount'] >= filter_params.min_dislike and
+        item['stats']['commentCount'] >= filter_params.min_comment and
+        item['stats']['cryCount'] >= filter_params.min_cry and
+        item['stats']['laughCount'] >= filter_params.min_laugh and
+        item['stats']['heartCount'] >= filter_params.min_hearts and
+
         (item['meta'] is not None if filter_params.metadata_required else True) and
+
         (item['nsfw'] if filter_params.nsfw_only else True)
     ]
 
@@ -45,6 +59,12 @@ def filter_items(items, downloaded, filter_params: FilterParams):
 @click.option("--max-images",  default=math.inf, help="Maximum number of images to download")
 @click.option("--min-width", default=0, help="Minimum width of the image")
 @click.option("--min-height", default=0, help="Minimum height of the image")
+@click.option("--min-like", default=0, help="Minimum number of likes")
+@click.option("--min-dislike", default=0, help="Minimum number of dislikes")
+@click.option("--min-comment", default=0, help="Minimum number of comments")
+@click.option("--min-hearts", default=0, help="Minimum number of hearts")
+@click.option("--min-cry", default=0, help="Minimum number of cry reactions")
+@click.option("--min-laugh", default=0, help="Minimum number of laugh reactions")
 @click.option("--require-metadata", default=False, help="Only download images with metadata")
 @click.option("--ignore-keywords", default="", help="CSV of keywords to match the prompt and ignore")
 @click.option("--nsfw", default=False, help="Include NSFW images")
@@ -57,6 +77,12 @@ def download(
         max_images,
         min_width,
         min_height,
+        min_like,
+        min_dislike,
+        min_comment,
+        min_hearts,
+        min_cry,
+        min_laugh,
         require_metadata,
         ignore_keywords,
         nsfw,
@@ -120,7 +146,12 @@ def download(
             filters = FilterParams(
                 min_width,
                 min_height,
-                0,
+                min_like,
+                min_dislike,
+                min_comment,
+                min_hearts,
+                min_cry,
+                min_laugh,
                 require_metadata,
                 nsfw_only
             )
