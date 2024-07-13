@@ -11,6 +11,7 @@ from PIL import Image, UnidentifiedImageError
 
 INITIAL_URL = "https://civitai.com/api/v1/images?sort=Newest"
 
+# TODO: Multi-processing
 DEFAULT_WORKERS = 4
 
 
