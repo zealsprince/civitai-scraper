@@ -53,6 +53,44 @@ def filter_items(items, downloaded, filter_params: FilterParams):
     ]
 
 
+def has_prompt(item):
+    return item['meta'] is not None and item['meta']['prompt'] is not None
+
+
+def should_ignore(item, ignore_keywords):
+    if not has_prompt(item):
+        return False
+
+    # Skip items that contain a specific prompt
+    if ignore_keywords != "":
+        for keyword in ignore_keywords.split(","):
+            if keyword in item['meta']['prompt']:
+                return True
+
+    return False
+
+
+def download(url, identifier, filepath, extension):
+    # Download the next item (image/video)
+    item_response = requests.get(url)
+
+    # Attempt to download an image (not all URLs are images)
+    try:
+        image = Image.open(BytesIO(item_response.content))
+
+        # Convert image to RGB if necessary
+        if image.mode in ['RGBA', 'P']:
+            image = image.convert('RGB')
+
+        # We need to specify the file extension as jpg for pillow.
+        image.save(os.path.join(filepath, f"{identifier}.jpg"))
+
+    except UnidentifiedImageError:
+        # Write the content to a file
+        with open(os.path.join(filepath, f"{identifier}.{extension}"), "wb") as file:
+            file.write(item_response.content)
+
+
 @click.command()
 @click.option("--api-key", help="API key for Civitai")
 @click.option("--download-path", default=".", help="Path to save the images")
@@ -71,7 +109,7 @@ def filter_items(items, downloaded, filter_params: FilterParams):
 @click.option("--nsfw-only", default=False, help="Only download NSFW images")
 @click.option("--segment-by-date", default=False, help="Segment images into directories by date")
 @click.option("--segment-by-rating", default=False, help="Segment images into directories by rating")
-def download(
+def scrape(
         api_key,
         download_path,
         max_images,
@@ -190,48 +228,23 @@ def download(
                     if not os.path.exists(filepath):
                         os.makedirs(filepath)
 
-                if item['meta'] is not None:
-                    if item['meta']['prompt'] is not None:
-                        # Skip items that contain a specific prompt
-                        if ignore_keywords != "":
-                            found = False
-                            for keyword in ignore_keywords.split(","):
-                                if keyword in item['meta']['prompt']:
-                                    print(
-                                        f"Skipping item {identifier} with matching ignore prompt. ({item['meta']['prompt']})")
+                if should_ignore(item, ignore_keywords):
+                    print(f"Ignoring image {
+                          identifier} due to keyword match in prompt content.")
 
-                                    found = True
-                                    break
+                    continue
 
-                            if found:
-                                continue
+                if has_prompt(item):
+                    # Save meta.prompt as a text file.
+                    meta_prompt = tag_re.sub('', item['meta']['prompt'])
+                    meta_filename = os.path.join(
+                        filepath, f"{identifier}.txt")
 
-                        # Save meta.prompt as a text file.
-                        meta_prompt = tag_re.sub('', item['meta']['prompt'])
-                        meta_filename = os.path.join(
-                            filepath, f"{identifier}.txt")
+                    with open(meta_filename, "w", encoding='utf-8') as meta_file:
+                        meta_file.write(meta_prompt)
 
-                        with open(meta_filename, "w", encoding='utf-8') as meta_file:
-                            meta_file.write(meta_prompt)
-
-                # Download the next item (image/video)
-                item_response = requests.get(url)
-
-                # Attempt to download an image (not all URLs are images)
-                try:
-                    image = Image.open(BytesIO(item_response.content))
-
-                    # Convert image to RGB if necessary
-                    if image.mode in ['RGBA', 'P']:
-                        image = image.convert('RGB')
-
-                    # We need to specify the file extension as jpg for pillow.
-                    image.save(os.path.join(filepath, f"{identifier}.jpg"))
-
-                except UnidentifiedImageError:
-                    # Write the content to a file
-                    with open(os.path.join(filepath, filename), "wb") as file:
-                        file.write(item_response.content)
+                # Download the image
+                download(url, identifier, filepath, extension)
 
                 log_file.write(url + "\n")
 
@@ -248,4 +261,4 @@ def download(
 
 
 if __name__ == "__main__":
-    download()
+    scrape()
