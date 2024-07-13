@@ -23,20 +23,16 @@ Usage: civitai-scraper.py [OPTIONS]
   Download images from Civitai API.
 
 Options:
-  --api-key TEXT              API key for Civitai
-  --download-path TEXT        Path to save the images
-  
-  --min-width INTEGER         Minimum width of the image
-  --min-height INTEGER        Minimum height of the image
-  
-  --max-images FLOAT          Maximum number of images to download
-  
-  --require-metadata BOOLEAN  Only download images with metadata
-  --ignore-keywords TEXT      Comma separate list of keywords to ignore a
-                              result for
-
-  --nsfw BOOLEAN              Include NSFW images
-  --nsfw-only BOOLEAN         Only download NSFW images
-  
-  --help                      Show this message and exit.
+  --api-key TEXT               API key for Civitai
+  --download-path TEXT         Path to save the images
+  --max-images FLOAT           Maximum number of images to download
+  --min-width INTEGER          Minimum width of the image
+  --min-height INTEGER         Minimum height of the image
+  --require-metadata BOOLEAN   Only download images with metadata
+  --ignore-keywords TEXT       CSV of keywords to match the prompt and ignore
+  --nsfw BOOLEAN               Include NSFW images
+  --nsfw-only BOOLEAN          Only download NSFW images
+  --segment-by-date BOOLEAN    Segment images into directories by date
+  --segment-by-rating BOOLEAN  Segment images into directories by rating
+  --help                       Show this message and exit.
 ```

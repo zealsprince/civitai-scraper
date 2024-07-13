@@ -46,9 +46,11 @@ def filter_items(items, downloaded, filter_params: FilterParams):
 @click.option("--min-width", default=0, help="Minimum width of the image")
 @click.option("--min-height", default=0, help="Minimum height of the image")
 @click.option("--require-metadata", default=False, help="Only download images with metadata")
-@click.option("--ignore-keywords", default="", help="Comma separate list of keywords to ignore a result for")
+@click.option("--ignore-keywords", default="", help="CSV of keywords to match the prompt and ignore")
 @click.option("--nsfw", default=False, help="Include NSFW images")
 @click.option("--nsfw-only", default=False, help="Only download NSFW images")
+@click.option("--segment-by-date", default=False, help="Segment images into directories by date")
+@click.option("--segment-by-rating", default=False, help="Segment images into directories by rating")
 def download(
         api_key,
         download_path,
@@ -58,7 +60,9 @@ def download(
         require_metadata,
         ignore_keywords,
         nsfw,
-        nsfw_only
+        nsfw_only,
+        segment_by_date,
+        segment_by_rating
 ):
     """Download images from Civitai API."""
     # Check for API key
@@ -71,9 +75,16 @@ def download(
     # Configuration
     headers = {"Authorization": f"Bearer {api_key}"}
 
+    # Append NSFW filter to the API endpoint
     api_endpoint = INITIAL_URL
-    if nsfw or nsfw_only:
+    if nsfw_only:
         api_endpoint += "&nsfw=true"
+
+    elif nsfw:
+        api_endpoint += "&nsfw=X"
+
+    else:
+        api_endpoint += "&nsfw=false"
 
     # Ensure directory exists
     if not os.path.exists(download_path):
@@ -123,7 +134,30 @@ def download(
 
             for item in filtered_items:
                 identifier = item['id']
+
                 url = item['url']
+                extension = re.search(r'\.([a-zA-Z0-9]+)$', url).group(1)
+
+                filename = f"{identifier}.{extension}"
+                filepath = os.path.join(download_path)
+
+                if segment_by_date:
+                    # Save image in a directory by date
+                    date = item['createdAt'].split("T")[0]
+                    filepath = os.path.join(
+                        filepath, date)
+
+                    if not os.path.exists(filepath):
+                        os.makedirs(filepath)
+
+                if segment_by_rating:
+                    # Save image in a directory by rating
+                    rating = item['nsfwLevel']
+                    filepath = os.path.join(
+                        filepath, f"{rating}")
+
+                    if not os.path.exists(filepath):
+                        os.makedirs(filepath)
 
                 if item['meta'] is not None:
                     if item['meta']['prompt'] is not None:
@@ -144,7 +178,7 @@ def download(
                         # Save meta.prompt as a text file.
                         meta_prompt = tag_re.sub('', item['meta']['prompt'])
                         meta_filename = os.path.join(
-                            download_path, f"{identifier}.txt")
+                            filepath, f"{identifier}.txt")
 
                         with open(meta_filename, "w", encoding='utf-8') as meta_file:
                             meta_file.write(meta_prompt)
@@ -160,15 +194,12 @@ def download(
                     if image.mode in ['RGBA', 'P']:
                         image = image.convert('RGB')
 
-                    # Save image
-                    img_filename = os.path.join(
-                        download_path, f"{identifier}.jpg")
-
-                    image.save(img_filename)
+                    # We need to specify the file extension as jpg for pillow.
+                    image.save(os.path.join(filepath, f"{identifier}.jpg"))
 
                 except UnidentifiedImageError:
-                    # Write teh content to a file
-                    with open(os.path.join(download_path, f"{identifier}.webm"), "wb") as file:
+                    # Write the content to a file
+                    with open(os.path.join(filepath, filename), "wb") as file:
                         file.write(item_response.content)
 
                 log_file.write(url + "\n")
@@ -180,7 +211,9 @@ def download(
                 if total_saved >= max_images:
                     break
 
-    print(f"Downloaded and saved {total_saved} images and metadata files.")
+    print(
+        f"Downloaded and saved {total_saved} images/videos and metadata files."
+    )
 
 
 if __name__ == "__main__":
