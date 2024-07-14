@@ -1,7 +1,9 @@
 
 import os
 import re
+import time
 import math
+import logging
 from io import BytesIO
 
 import click
@@ -10,8 +12,6 @@ import requests
 from PIL import Image, UnidentifiedImageError
 
 INITIAL_URL = "https://civitai.com/api/v1/images?sort=Newest"
-
-# TODO: Multi-processing
 DEFAULT_WORKERS = 4
 
 
@@ -54,7 +54,10 @@ def filter_items(items, downloaded, filter_params: FilterParams):
 
 
 def has_prompt(item):
-    return item['meta'] is not None and item['meta']['prompt'] is not None
+    if item['meta'] is not None:
+        return "prompt" in item['meta']
+
+    return False
 
 
 def should_ignore(item, ignore_keywords):
@@ -90,11 +93,17 @@ def download(url, identifier, filepath, extension):
         with open(os.path.join(filepath, f"{identifier}.{extension}"), "wb") as file:
             file.write(item_response.content)
 
+    logging.info(f"Downloaded {identifier}.")
+
 
 @click.command()
-@click.option("--api-key", help="API key for Civitai")
-@click.option("--download-path", default=".", help="Path to save the images")
-@click.option("--max-images",  default=math.inf, help="Maximum number of images to download")
+@click.option("-d", "--debug", default=False, help="Enable debug logging")
+@click.option("-s", "--silent", default=False, help="Disable logging")
+@click.option("-k", "--api-key", help="API key for Civitai", required=True)
+@click.option("-p", "--download-path", default=".", help="Path to save the images")
+@click.option("-w", "--workers", default=DEFAULT_WORKERS, help="Number of workers to use for downloading")
+@click.option("-l", "--limit",  default=0, help="Maximum number of images to download")
+@click.option("-c", "--cursor", help="Cursor to start downloading from")
 @click.option("--min-width", default=0, help="Minimum width of the image")
 @click.option("--min-height", default=0, help="Minimum height of the image")
 @click.option("--min-like", default=0, help="Minimum number of likes")
@@ -107,12 +116,16 @@ def download(url, identifier, filepath, extension):
 @click.option("--ignore-keywords", default="", help="CSV of keywords to match the prompt and ignore")
 @click.option("--nsfw", default=False, help="Include NSFW images")
 @click.option("--nsfw-only", default=False, help="Only download NSFW images")
-@click.option("--segment-by-date", default=False, help="Segment images into directories by date")
-@click.option("--segment-by-rating", default=False, help="Segment images into directories by rating")
+@click.option("--segment-by-date", default=False, help="Segment images into directories by date", is_flag=True)
+@click.option("--segment-by-rating", default=False, help="Segment images into directories by rating", is_flag=True)
 def scrape(
+        debug,
+        silent,
         api_key,
         download_path,
-        max_images,
+        limit,
+        workers,
+        cursor,
         min_width,
         min_height,
         min_like,
@@ -129,14 +142,14 @@ def scrape(
         segment_by_rating
 ):
     """Download images from Civitai API."""
-    # Check for API key
-    api_key = os.environ.get("CIVITAI_API_KEY") or api_key
-    if not api_key:
-        print("Please set the CIVITAI_API_KEY environment variable or pass it as an argument via --api-key.")
 
-        return
+    if debug:
+        logging.getLogger().setLevel(logging.DEBUG)
 
-    # Configuration
+    if silent:
+        logging.getLogger().setLevel(logging.CRITICAL)
+
+    # Authentication headers
     headers = {"Authorization": f"Bearer {api_key}"}
 
     # Append NSFW filter to the API endpoint
@@ -149,6 +162,10 @@ def scrape(
 
     else:
         api_endpoint += "&nsfw=false"
+
+    # Append cursor to the API endpoint
+    if cursor:
+        api_endpoint += f"&cursor={cursor}"
 
     # Ensure directory exists
     if not os.path.exists(download_path):
@@ -166,17 +183,56 @@ def scrape(
         with open(downloaded_urls_path) as log_file:
             downloaded_urls = set(log_file.readlines())
 
+    next_cursor = cursor
+
     # Download images
     with open(downloaded_urls_path, "a") as log_file:
         next_url = api_endpoint
         total_saved = 0
 
-        while next_url and total_saved < max_images:
-            response = requests.get(next_url, headers=headers)
-            response_json = response.json()
+        while next_url and (limit == 0 or total_saved < limit):
+            success = False
+            retry_count = 0
+
+            while not success and retry_count < 3:
+                response = requests.get(next_url, headers=headers)
+
+                try:
+                    response_json = response.json()
+
+                    success = True
+
+                except requests.JSONDecodeError as e:
+                    logging.error(f"Failed to decode JSON response: {e}")
+                    logging.debug(f"Response: {response.text}")
+
+                    retry_count += 1
+
+                    logging.info(
+                        f"Retrying in 30 seconds... (Attempt {retry_count})"
+                    )
+
+                    time.sleep(30)
+
+            if not success:
+                logging.fatal(
+                    f"Failed to retrieve JSON response after 3 attempts. Exiting..."
+                )
+
+                return
 
             # Get next URL from metadata
             if 'metadata' in response_json and 'nextPage' in response_json['metadata']:
+                if next_cursor:
+                    logging.info(f"Dowloading images from '{next_cursor}' to '{
+                        response_json['metadata']['nextCursor']}'"
+                    )
+                else:
+                    logging.info(f"Dowloading images from the latest entry to '{
+                        response_json['metadata']['nextCursor']}'"
+                    )
+
+                next_cursor = response_json['metadata']['nextCursor']
                 next_url = response_json['metadata']['nextPage']
             else:
                 next_url = None
@@ -205,9 +261,11 @@ def scrape(
                 identifier = item['id']
 
                 url = item['url']
+
+                # Get the file extension
                 extension = re.search(r'\.([a-zA-Z0-9]+)$', url).group(1)
 
-                filename = f"{identifier}.{extension}"
+                # Prepare the file path which will be optionally segmented
                 filepath = os.path.join(download_path)
 
                 if segment_by_date:
@@ -228,12 +286,15 @@ def scrape(
                     if not os.path.exists(filepath):
                         os.makedirs(filepath)
 
+                # Skip images that contain specific prompt keywords
                 if should_ignore(item, ignore_keywords):
-                    print(f"Ignoring image {
-                          identifier} due to keyword match in prompt content.")
+                    logging.info(f"Ignoring image {
+                        identifier} due to keyword match in prompt content."
+                    )
 
                     continue
 
+                # Save meta.prompt as a text file if the prompt exists
                 if has_prompt(item):
                     # Save meta.prompt as a text file.
                     meta_prompt = tag_re.sub('', item['meta']['prompt'])
@@ -246,19 +307,21 @@ def scrape(
                 # Download the image
                 download(url, identifier, filepath, extension)
 
+                # Log the URL to avoid duplicates
                 log_file.write(url + "\n")
-
                 downloaded_urls.add(url)
 
+                # Increment the total saved count and check if we've reached the limit
                 total_saved += 1
-
-                if total_saved >= max_images:
+                if limit != 0 and total_saved >= limit:
                     break
 
-    print(
+    logging.info(
         f"Downloaded and saved {total_saved} images/videos and metadata files."
     )
 
 
 if __name__ == "__main__":
-    scrape()
+    logging.basicConfig(level=logging.INFO)
+
+    scrape(auto_envvar_prefix='CIVITAI_SCRAPER')
