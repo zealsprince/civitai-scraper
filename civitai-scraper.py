@@ -2,8 +2,8 @@
 import os
 import re
 import time
-import math
 import logging
+from multiprocessing import Pool
 from io import BytesIO
 
 import click
@@ -12,7 +12,10 @@ import requests
 from PIL import Image, UnidentifiedImageError
 
 INITIAL_URL = "https://civitai.com/api/v1/images?sort=Newest"
-DEFAULT_WORKERS = 4
+DEFAULT_WORKERS = 16
+
+# Regex to clean up prompt text
+TAG_REGEX = re.compile(r'<.*?>')
 
 
 class FilterParams:
@@ -73,7 +76,7 @@ def should_ignore(item, ignore_keywords):
     return False
 
 
-def download(url, identifier, filepath, extension):
+def download_file(url, identifier, filepath, extension):
     # Download the next item (image/video)
     item_response = requests.get(url)
 
@@ -94,6 +97,73 @@ def download(url, identifier, filepath, extension):
             file.write(item_response.content)
 
     logging.info(f"Downloaded {identifier}.")
+
+
+def download_item(item, download_path, segment_by_date, segment_by_rating, ignore_keywords):
+    identifier = item['id']
+
+    url = item['url']
+
+    # Get the file extension
+    extension = re.search(r'\.([a-zA-Z0-9]+)$', url).group(1)
+
+    # Prepare the file path which will be optionally segmented
+    filepath = os.path.join(download_path)
+
+    if segment_by_date:
+        # Save image in a directory by date
+        date = item['createdAt'].split("T")[0]
+        filepath = os.path.join(
+            filepath, date)
+
+        if not os.path.exists(filepath):
+            os.makedirs(filepath)
+
+    if segment_by_rating:
+        # Save image in a directory by rating
+        rating = item['nsfwLevel']
+        filepath = os.path.join(
+            filepath, f"{rating}")
+
+        if not os.path.exists(filepath):
+            os.makedirs(filepath)
+
+    # Skip images that contain specific prompt keywords
+    if should_ignore(item, ignore_keywords):
+        return {
+            "error": None,
+            "ignored": True,
+            "identifier": identifier,
+            "url": url,
+        }
+
+    # Save meta.prompt as a text file if the prompt exists
+    if has_prompt(item):
+        # Save meta.prompt as a text file.
+        meta_prompt = TAG_REGEX.sub('', item['meta']['prompt'])
+        meta_filename = os.path.join(
+            filepath, f"{identifier}.txt")
+
+        with open(meta_filename, "w", encoding='utf-8') as meta_file:
+            meta_file.write(meta_prompt)
+
+    try:
+        download_file(url, identifier, filepath, extension)
+
+    except Exception as e:
+        return {
+            "error": e,
+            "ignored": False,
+            "identifier": identifier,
+            "url": url,
+        }
+
+    return {
+        "error": None,
+        "ignored": False,
+        "identifier": identifier,
+        "url": url,
+    }
 
 
 @click.command()
@@ -170,9 +240,6 @@ def scrape(
     # Ensure directory exists
     if not os.path.exists(download_path):
         os.makedirs(download_path)
-
-    # Regex to clean up prompt text
-    tag_re = re.compile(r'<.*?>')
 
     # Store downloaded URLs to avoid duplicates
     downloaded_urls_path = os.path.join(download_path, "downloaded.log")
@@ -257,62 +324,33 @@ def scrape(
                 filter_params=filters
             )
 
-            for item in filtered_items:
-                identifier = item['id']
+            with Pool(workers) as pool:
+                results = pool.starmap(
+                    download_item,
+                    [(item, download_path, segment_by_date, segment_by_rating,
+                      ignore_keywords) for item in filtered_items]
+                )
 
-                url = item['url']
+                for result in results:
+                    if result:
+                        if result['ignored']:
+                            logging.info(f"Ignored {result['identifier']}.")
 
-                # Get the file extension
-                extension = re.search(r'\.([a-zA-Z0-9]+)$', url).group(1)
+                        if result['error'] is None:
+                            logging.info(f"Downloaded {result['identifier']}.")
 
-                # Prepare the file path which will be optionally segmented
-                filepath = os.path.join(download_path)
+                            total_saved += 1
 
-                if segment_by_date:
-                    # Save image in a directory by date
-                    date = item['createdAt'].split("T")[0]
-                    filepath = os.path.join(
-                        filepath, date)
+                            log_file.write(f"{result['url']}\n")
 
-                    if not os.path.exists(filepath):
-                        os.makedirs(filepath)
+                            downloaded_urls.add(result['url'])
 
-                if segment_by_rating:
-                    # Save image in a directory by rating
-                    rating = item['nsfwLevel']
-                    filepath = os.path.join(
-                        filepath, f"{rating}")
+                        else:
+                            logging.error(
+                                f"Failed to download {
+                                    result['identifier']}: {result['error']}"
+                            )
 
-                    if not os.path.exists(filepath):
-                        os.makedirs(filepath)
-
-                # Skip images that contain specific prompt keywords
-                if should_ignore(item, ignore_keywords):
-                    logging.info(f"Ignoring image {
-                        identifier} due to keyword match in prompt content."
-                    )
-
-                    continue
-
-                # Save meta.prompt as a text file if the prompt exists
-                if has_prompt(item):
-                    # Save meta.prompt as a text file.
-                    meta_prompt = tag_re.sub('', item['meta']['prompt'])
-                    meta_filename = os.path.join(
-                        filepath, f"{identifier}.txt")
-
-                    with open(meta_filename, "w", encoding='utf-8') as meta_file:
-                        meta_file.write(meta_prompt)
-
-                # Download the image
-                download(url, identifier, filepath, extension)
-
-                # Log the URL to avoid duplicates
-                log_file.write(url + "\n")
-                downloaded_urls.add(url)
-
-                # Increment the total saved count and check if we've reached the limit
-                total_saved += 1
                 if limit != 0 and total_saved >= limit:
                     break
 
