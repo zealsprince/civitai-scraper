@@ -63,6 +63,19 @@ def has_prompt(item):
     return False
 
 
+def contains_keywords(item, require_keywords):
+    if not has_prompt(item):
+        return False
+
+    # Skip items that do not contain a specific prompt
+    if require_keywords != "":
+        for keyword in require_keywords.split(","):
+            if str(keyword).strip() in item['meta']['prompt']:
+                return True
+
+    return False
+
+
 def should_ignore(item, ignore_keywords):
     if not has_prompt(item):
         return False
@@ -70,7 +83,7 @@ def should_ignore(item, ignore_keywords):
     # Skip items that contain a specific prompt
     if ignore_keywords != "":
         for keyword in ignore_keywords.split(","):
-            if keyword in item['meta']['prompt']:
+            if str(keyword).strip() in item['meta']['prompt']:
                 return True
 
     return False
@@ -99,7 +112,7 @@ def download_file(url, identifier, filepath, extension):
     logging.info(f"Downloaded {identifier}.")
 
 
-def download_item(item, download_path, segment_by_date, segment_by_rating, ignore_keywords):
+def download_item(item, download_path, segment_by_date, segment_by_rating, require_keywords, ignore_keywords):
     identifier = item['id']
 
     url = item['url']
@@ -128,18 +141,25 @@ def download_item(item, download_path, segment_by_date, segment_by_rating, ignor
         if not os.path.exists(filepath):
             os.makedirs(filepath)
 
-    # Skip images that contain specific prompt keywords
-    if should_ignore(item, ignore_keywords):
-        return {
-            "error": None,
-            "ignored": True,
-            "identifier": identifier,
-            "url": url,
-        }
-
-    # Save meta.prompt as a text file if the prompt exists
     if has_prompt(item):
-        # Save meta.prompt as a text file.
+        # Skip images that contain specific prompt keywords
+        if should_ignore(item, ignore_keywords):
+            return {
+                "error": None,
+                "ignored": True,
+                "identifier": identifier,
+                "url": url,
+            }
+
+        if require_keywords != "" and not contains_keywords(item, require_keywords):
+            return {
+                "error": None,
+                "ignored": True,
+                "identifier": identifier,
+                "url": url,
+            }
+
+        # Save meta.prompt as a text file if the prompt exists
         meta_prompt = TAG_REGEX.sub('', item['meta']['prompt'])
         meta_filename = os.path.join(
             filepath, f"{identifier}.txt")
@@ -183,6 +203,7 @@ def download_item(item, download_path, segment_by_date, segment_by_rating, ignor
 @click.option("--min-cry", default=0, help="Minimum number of cry reactions")
 @click.option("--min-laugh", default=0, help="Minimum number of laugh reactions")
 @click.option("--require-metadata", default=False, help="Only download images with metadata")
+@click.option("--require-keywords", default="", help="CSV of keywords to match the prompt and require")
 @click.option("--ignore-keywords", default="", help="CSV of keywords to match the prompt and ignore")
 @click.option("--nsfw", default=False, help="Include NSFW images")
 @click.option("--nsfw-only", default=False, help="Only download NSFW images")
@@ -205,6 +226,7 @@ def scrape(
         min_cry,
         min_laugh,
         require_metadata,
+        require_keywords,
         ignore_keywords,
         nsfw,
         nsfw_only,
@@ -304,6 +326,7 @@ def scrape(
             else:
                 next_url = None
 
+            # Filters passed to the filter_items function
             filters = FilterParams(
                 min_width,
                 min_height,
@@ -327,8 +350,16 @@ def scrape(
             with Pool(workers) as pool:
                 results = pool.starmap(
                     download_item,
-                    [(item, download_path, segment_by_date, segment_by_rating,
-                      ignore_keywords) for item in filtered_items]
+                    [
+                        (
+                            item,
+                            download_path,
+                            segment_by_date,
+                            segment_by_rating,
+                            require_keywords,
+                            ignore_keywords
+                        ) for item in filtered_items
+                    ]
                 )
 
                 for result in results:
