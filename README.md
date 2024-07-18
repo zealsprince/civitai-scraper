@@ -26,7 +26,8 @@ Options:
   -d, --debug BOOLEAN         Enable debug logging
   -s, --silent BOOLEAN        Disable logging
   -k, --api-key TEXT          API key for Civitai  [required]
-  -p, --download-path TEXT    Path to save the images
+  -o, --output-path TEXT      Path to save the images
+  -z, --compress              Compress images to reduce file size
   -w, --workers INTEGER       Number of workers to use for downloading
   -l, --limit INTEGER         Maximum number of images to download
   -c, --cursor TEXT           Cursor to start downloading from
@@ -39,6 +40,7 @@ Options:
   --min-cry INTEGER           Minimum number of cry reactions
   --min-laugh INTEGER         Minimum number of laugh reactions
   --require-metadata BOOLEAN  Only download images with metadata
+  --require-keywords TEXT     CSV of keywords to match the prompt and require
   --ignore-keywords TEXT      CSV of keywords to match the prompt and ignore
   --nsfw BOOLEAN              Include NSFW images
   --nsfw-only BOOLEAN         Only download NSFW images

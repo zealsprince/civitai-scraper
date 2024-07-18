@@ -89,30 +89,40 @@ def should_ignore(item, ignore_keywords):
     return False
 
 
-def download_file(url, identifier, filepath, extension):
+def download_file(url, identifier, filepath, extension, compress=False):
     # Download the next item (image/video)
     item_response = requests.get(url)
 
-    # Attempt to download an image (not all URLs are images)
-    try:
-        image = Image.open(BytesIO(item_response.content))
-
-        # Convert image to RGB if necessary
-        if image.mode in ['RGBA', 'P']:
-            image = image.convert('RGB')
-
-        # We need to specify the file extension as jpg for pillow.
-        image.save(os.path.join(filepath, f"{identifier}.jpg"))
-
-    except UnidentifiedImageError:
-        # Write the content to a file
+    def write_raw_response():
         with open(os.path.join(filepath, f"{identifier}.{extension}"), "wb") as file:
             file.write(item_response.content)
+
+    # Attempt to download an image (not all URLs are images)
+    if compress is True:
+        try:
+            image = Image.open(BytesIO(item_response.content))
+
+            # Convert image to RGB if necessary
+            if image.mode in ['RGBA', 'P']:
+                image = image.convert('RGB')
+
+            # We need to specify the file extension as jpg for pillow.
+            image.save(os.path.join(
+                filepath, f"{identifier}.jpg"),
+                optimize=True,
+                quality=80
+            )
+
+        except UnidentifiedImageError:
+            write_raw_response()
+
+    else:
+        write_raw_response()
 
     logging.info(f"Downloaded {identifier}.")
 
 
-def download_item(item, download_path, segment_by_date, segment_by_rating, require_keywords, ignore_keywords):
+def download_item(item, output_path, compress, segment_by_date, segment_by_rating, require_keywords, ignore_keywords):
     identifier = item['id']
 
     url = item['url']
@@ -121,7 +131,7 @@ def download_item(item, download_path, segment_by_date, segment_by_rating, requi
     extension = re.search(r'\.([a-zA-Z0-9]+)$', url).group(1)
 
     # Prepare the file path which will be optionally segmented
-    filepath = os.path.join(download_path)
+    filepath = os.path.join(output_path)
 
     if segment_by_date:
         # Save image in a directory by date
@@ -168,7 +178,13 @@ def download_item(item, download_path, segment_by_date, segment_by_rating, requi
             meta_file.write(meta_prompt)
 
     try:
-        download_file(url, identifier, filepath, extension)
+        download_file(
+            url,
+            identifier,
+            filepath,
+            extension,
+            compress
+        )
 
     except Exception as e:
         return {
@@ -190,7 +206,8 @@ def download_item(item, download_path, segment_by_date, segment_by_rating, requi
 @click.option("-d", "--debug", default=False, help="Enable debug logging")
 @click.option("-s", "--silent", default=False, help="Disable logging")
 @click.option("-k", "--api-key", help="API key for Civitai", required=True)
-@click.option("-p", "--download-path", default=".", help="Path to save the images")
+@click.option("-o", "--output-path", default=".", help="Path to save the images")
+@click.option("-z", "--compress", default=False, help="Compress images to reduce file size", is_flag=True)
 @click.option("-w", "--workers", default=DEFAULT_WORKERS, help="Number of workers to use for downloading")
 @click.option("-l", "--limit",  default=0, help="Maximum number of images to download")
 @click.option("-c", "--cursor", help="Cursor to start downloading from")
@@ -213,7 +230,8 @@ def scrape(
         debug,
         silent,
         api_key,
-        download_path,
+        output_path,
+        compress,
         limit,
         workers,
         cursor,
@@ -260,11 +278,11 @@ def scrape(
         api_endpoint += f"&cursor={cursor}"
 
     # Ensure directory exists
-    if not os.path.exists(download_path):
-        os.makedirs(download_path)
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
 
     # Store downloaded URLs to avoid duplicates
-    downloaded_urls_path = os.path.join(download_path, "downloaded.log")
+    downloaded_urls_path = os.path.join(output_path, "downloaded.log")
     downloaded_urls = set()
 
     # Load downloaded URLs
@@ -353,7 +371,8 @@ def scrape(
                     [
                         (
                             item,
-                            download_path,
+                            output_path,
+                            compress,
                             segment_by_date,
                             segment_by_rating,
                             require_keywords,
