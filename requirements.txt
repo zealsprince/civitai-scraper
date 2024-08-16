@@ -1,3 +1,4 @@
 click==8.1.7
 pillow==10.4.0
+pillow-avif-plugin==1.4.6
 requests==2.32.3

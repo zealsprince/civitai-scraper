@@ -9,6 +9,7 @@ from io import BytesIO
 import click
 import requests
 
+import pillow_avif
 from PIL import Image, UnidentifiedImageError
 
 INITIAL_URL = "https://civitai.com/api/v1/images?sort=Newest"
@@ -89,7 +90,7 @@ def should_ignore(item, ignore_keywords):
     return False
 
 
-def download_file(url, identifier, filepath, extension, compress=False):
+def download_file(url, identifier, filepath, extension, compress=False, avif=False):
     # Download the next item (image/video)
     item_response = requests.get(url)
 
@@ -98,7 +99,7 @@ def download_file(url, identifier, filepath, extension, compress=False):
             file.write(item_response.content)
 
     # Attempt to download an image (not all URLs are images)
-    if compress is True:
+    if compress is True or avif is True:
         try:
             image = Image.open(BytesIO(item_response.content))
 
@@ -106,12 +107,19 @@ def download_file(url, identifier, filepath, extension, compress=False):
             if image.mode in ['RGBA', 'P']:
                 image = image.convert('RGB')
 
-            # We need to specify the file extension as jpg for pillow.
-            image.save(os.path.join(
-                filepath, f"{identifier}.jpg"),
-                optimize=True,
-                quality=80
-            )
+            if avif:
+                image.save(os.path.join(
+                    filepath, f"{identifier}.avif"),
+                    quality=70 if compress else 100,
+                    lossless=False if compress else True
+                )
+            else:
+                # We need to specify the file extension as jpg for pillow.
+                image.save(os.path.join(
+                    filepath, f"{identifier}.jpg"),
+                    optimize=True,
+                    quality=80
+                )
 
         except UnidentifiedImageError:
             write_raw_response()
@@ -122,7 +130,7 @@ def download_file(url, identifier, filepath, extension, compress=False):
     logging.info(f"Downloaded {identifier}.")
 
 
-def download_item(item, output_path, compress, segment_by_date, segment_by_rating, require_keywords, ignore_keywords):
+def download_item(item, output_path, compress, avif, segment_by_date, segment_by_rating, require_keywords, ignore_keywords):
     identifier = item['id']
 
     url = item['url']
@@ -183,7 +191,8 @@ def download_item(item, output_path, compress, segment_by_date, segment_by_ratin
             identifier,
             filepath,
             extension,
-            compress
+            compress,
+            avif
         )
 
     except Exception as e:
@@ -226,6 +235,7 @@ def download_item(item, output_path, compress, segment_by_date, segment_by_ratin
 @click.option("--nsfw-only", default=False, help="Only download NSFW images")
 @click.option("--segment-by-date", default=False, help="Segment images into directories by date", is_flag=True)
 @click.option("--segment-by-rating", default=False, help="Segment images into directories by rating", is_flag=True)
+@click.option("--avif", is_flag=True, help="Save images in AVIF")
 def scrape(
         debug,
         silent,
@@ -249,7 +259,8 @@ def scrape(
         nsfw,
         nsfw_only,
         segment_by_date,
-        segment_by_rating
+        segment_by_rating,
+        avif
 ):
     """Download images from Civitai API."""
 
@@ -373,6 +384,7 @@ def scrape(
                             item,
                             output_path,
                             compress,
+                            avif,
                             segment_by_date,
                             segment_by_rating,
                             require_keywords,
